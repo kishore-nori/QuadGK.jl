@@ -78,9 +78,9 @@ quadgk(f, segs...; kws...) =
     quadgk(f, promote(segs...)...; kws...)
 
 function quadgk(f, segs::T...;
-       atol=nothing, rtol=nothing, maxevals=10^7, order=7, norm=norm, segbuf=nothing, eval_segbuf=nothing) where {T}
+       atol=nothing, rtol=nothing, maxevals=10^7, order=7, norm=norm, segbuf=nothing, eval_segbuf=nothing, return_gauss_val::Bool=false) where {T}
     handle_infinities(f, segs) do f, s, _
-        do_quadgk(f, s, order, atol, rtol, maxevals, norm, segbuf, eval_segbuf)
+        do_quadgk(f, s, order, atol, rtol, maxevals, norm, segbuf, eval_segbuf;return_gauss_val=return_gauss_val)
     end
 end
 
@@ -126,10 +126,10 @@ an `SVector` from the [StaticArrays.jl package](https://github.com/JuliaArrays/S
 quadgk!(f!, result, segs...; kws...) =
     quadgk!(f!, result, promote(segs...)...; kws...)
 
-function quadgk!(f!, result, a::T,b::T,c::T...; atol=nothing, rtol=nothing, maxevals=10^7, order=7, norm=norm, segbuf=nothing, eval_segbuf=nothing) where {T}
+function quadgk!(f!, result, a::T,b::T,c::T...; atol=nothing, rtol=nothing, maxevals=10^7, order=7, norm=norm, segbuf=nothing, eval_segbuf=nothing, return_gauss_val::Bool=false) where {T}
     fx = result / oneunit(T) # pre-allocate array of correct type for integrand evaluations
     f = InplaceIntegrand(f!, result, fx)
-    return quadgk(f, a, b, c...; atol=atol, rtol=rtol, maxevals=maxevals, order=order, norm=norm, segbuf=segbuf, eval_segbuf=eval_segbuf)
+    return quadgk(f, a, b, c...; atol=atol, rtol=rtol, maxevals=maxevals, order=order, norm=norm, segbuf=segbuf, eval_segbuf=eval_segbuf, return_gauss_val=return_gauss_val)
 end
 
 struct Counter{F}

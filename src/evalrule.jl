@@ -14,7 +14,7 @@ Segment(a::Number, b::Number) = Segment(promote(a, b)..., nothing, nothing)
 
 # Internal routine: approximately integrate f(x) over the interval (a,b)
 # by evaluating the integration rule (x,w,wg). Return a Segment.
-function evalrule(f::F, a,b, x,w,wg, nrm) where {F}
+function evalrule(f::F, a,b, x,w,wg, nrm; return_gauss_val::Bool=false) where {F}
     # Ik and Ig are integrals via Kronrod and Gauss rules, respectively
     s = convert(eltype(x), 0.5) * (b-a)
     n1 = 1 - (length(x) & 1) # 0 if even order, 1 if odd order
@@ -38,7 +38,8 @@ function evalrule(f::F, a,b, x,w,wg, nrm) where {F}
     if isnan(E) || isinf(E)
         throw(DomainError(a+s, "integrand produced $E in the interval ($a, $b)"))
     end
-    return Segment(oftype(s, a), oftype(s, b), Ik_s, E)
+    I = ifelse(return_gauss_val, Ig_s, Ik_s)
+    return Segment(oftype(s, a), oftype(s, b), I, E)
 end
 
 # compute result = f(x1) + f(x2) in-place
@@ -50,7 +51,7 @@ end
 
 # as above, but call assume a mutable result type (e.g. an array) and
 # act in-place using `f!(result, x)`.
-function evalrule(f::InplaceIntegrand{F}, a,b, x,w,wg, nrm) where {F}
+function evalrule(f::InplaceIntegrand{F}, a,b, x,w,wg, nrm; return_gauss_val::Bool=false) where {F}
     # Ik and Ig are integrals via Kronrod and Gauss rules, respectively
     s = convert(eltype(x), 0.5) * (b-a)
     n1 = 1 - (length(x) & 1) # 0 if even order, 1 if odd order
@@ -72,10 +73,18 @@ function evalrule(f::InplaceIntegrand{F}, a,b, x,w,wg, nrm) where {F}
         Ik .+= fg .* w[2i] .+ fk .* w[2i-1]
     end
     Ik_s = Ik * s # new variable since this may change the type
-    f.Idiff .= Ik_s .- Ig .* s
+
+    if return_gauss_val
+      I = Ig .* s
+      f.Idiff .= Ik_s .- I
+    else 
+      I = Ik_s
+      f.Idiff .= Ik_s .- Ig .* s
+    end 
     E = nrm(f.Idiff)
     if isnan(E) || isinf(E)
         throw(DomainError(a+s, "integrand produced $E in the interval ($a, $b)"))
     end
-    return Segment(oftype(s, a), oftype(s, b), Ik_s, E)
+
+    return Segment(oftype(s, a), oftype(s, b), I, E)
 end

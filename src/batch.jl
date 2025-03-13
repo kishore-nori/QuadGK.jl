@@ -34,7 +34,8 @@ end
 BatchIntegrand{Y,X}(f!; kws...) where {Y,X} = BatchIntegrand(f!, Y[], X[]; kws...)
 BatchIntegrand{Y}(f!; kws...) where {Y} = BatchIntegrand(f!, Y[]; kws...)
 
-function batchevalrule(fx::AbstractVector{T}, a,b, x,w,wg, nrm) where {T}
+function batchevalrule(fx::AbstractVector{T}, a,b, x,w,wg, nrm;
+  return_gauss_val::Bool=false) where {T}
     l = length(x)
     n = 2l - 1 # number of Kronrod points
     n1 = 1 - (l & 1) # 0 if even order, 1 if odd order
@@ -58,10 +59,12 @@ function batchevalrule(fx::AbstractVector{T}, a,b, x,w,wg, nrm) where {T}
     if isnan(E) || isinf(E)
         throw(DomainError(a+s, "integrand produced $E in the interval ($a, $b)"))
     end
-    return Segment(oftype(s, a), oftype(s, b), Ik_s, E)
+    I = ifelse(return_gauss_val, Ig_s, Ik_s)
+    return Segment(oftype(s, a), oftype(s, b), I, E)
 end
 
-function evalrules(f::BatchIntegrand, s::NTuple{N}, x,w,wg, nrm) where {N}
+function evalrules(f::BatchIntegrand, s::NTuple{N}, x,w,wg, nrm;
+  return_gauss_val::Bool=false) where {N}
     l = length(x)
     m = 2l-1    # evaluations per segment
     n = (N-1)*m # total evaluations
@@ -79,7 +82,7 @@ function evalrules(f::BatchIntegrand, s::NTuple{N}, x,w,wg, nrm) where {N}
     end
     f.f!(f.y, f.x)  # evaluate integrand
     return ntuple(Val(N-1)) do i
-        return batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), s[i], s[i+1], x,w,wg, nrm)
+        return batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), s[i], s[i+1], x,w,wg, nrm, return_gauss_val=return_gauss_val)
     end
 end
 
@@ -106,27 +109,27 @@ function eval_integrand_from_segs!(f::BatchIntegrand, eval_segs::AbstractVector,
 end
 
 # eval rules for a vector `eval_segs` of segments, mutating segs in-place
-function evalrules!(segs::AbstractVector, f::BatchIntegrand, eval_segs::AbstractVector, x,w,wg, nrm)
+function evalrules!(segs::AbstractVector, f::BatchIntegrand, eval_segs::AbstractVector, x,w,wg, nrm; return_gauss_val::Bool=false)
     axes(segs, 1) == axes(eval_segs, 1) || throw(DimensionMismatch())
     m = eval_integrand_from_segs!(f, eval_segs, x,w,wg, nrm)
     for i in 1:length(segs)
         @inbounds a, b = eval_segs[i].a, eval_segs[i].b
-        segs[i] = batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), a,b, x,w,wg, nrm)
+        segs[i] = batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), a,b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
     end
     return segs
 end
 
 # eval rules for a vector `eval_segs` of segments
-function evalrules(f::BatchIntegrand, eval_segs::Vector, x,w,wg, nrm)
+function evalrules(f::BatchIntegrand, eval_segs::Vector, x,w,wg, nrm; return_gauss_val::Bool=false)
     m = eval_integrand_from_segs!(f, eval_segs, x,w,wg, nrm)
     return map(1:length(eval_segs)) do i
         @inbounds a, b = eval_segs[i].a, eval_segs[i].b
-        batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), a,b, x,w,wg, nrm)
+        batchevalrule(view(f.y, (1+(i-1)*m):(i*m)), a,b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
     end
 end
 
 # we refine as many segments as we can fit into the buffer
-function refine(f::BatchIntegrand, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm) where {T}
+function refine(f::BatchIntegrand, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm; return_gauss_val::Bool=false) where {T}
     tol = max(atol, rtol*nrm(I))
     nsegs = 0
     len = length(segs)
@@ -169,8 +172,8 @@ function refine(f::BatchIntegrand, segs::Vector{T}, I, E, numevals, x,w,wg,n, at
     for i in 1:nsegs    # evaluate segments and update estimates & heap
         s = segs[len-i+1]
         mid = (s.a + s.b)/2
-        s1 = batchevalrule(view(f.y, 1+2(i-1)*m:(2i-1)*m), s.a,mid, x,w,wg, nrm)
-        s2 = batchevalrule(view(f.y, 1+(2i-1)*m:2i*m), mid,s.b, x,w,wg, nrm)
+        s1 = batchevalrule(view(f.y, 1+2(i-1)*m:(2i-1)*m), s.a,mid, x,w,wg, nrm, return_gauss_val=return_gauss_val)
+        s2 = batchevalrule(view(f.y, 1+(2i-1)*m:2i*m), mid,s.b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
         I = (I - s.I) + s1.I + s2.I
         E = (E - s.E) + s1.E + s2.E
         segs[len-i+1] = s1

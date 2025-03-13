@@ -15,7 +15,8 @@ end
 # with maxevals an approximate maximum number of f evaluations.
 function do_quadgk(f::F, s::NTuple{N,T}, n, atol, rtol, maxevals, nrm,
                    _segbuf::Union{Nothing,<:AbstractVector{<:Segment},ReturnSegbuf},
-                   eval_segbuf::Union{Nothing,<:AbstractVector{<:Segment}}) where {T,N,F}
+                   eval_segbuf::Union{Nothing,<:AbstractVector{<:Segment}};
+                   return_gauss_val::Bool=false) where {T,N,F}
     x,w,wg = cachedrule(T,n)
     segbuf = _segbuf isa ReturnSegbuf ? _segbuf.segbuf : _segbuf
     isnothing(segbuf) || Base.require_one_based_indexing(segbuf)
@@ -25,19 +26,19 @@ function do_quadgk(f::F, s::NTuple{N,T}, n, atol, rtol, maxevals, nrm,
         isempty(eval_segbuf) && throw(ArgumentError("eval_segbuf must be non-empty"))
         if f isa BatchIntegrand
             if isnothing(segbuf)
-                segbuf2 = evalrules(f, eval_segbuf, x,w,wg, nrm)
+                segbuf2 = evalrules(f, eval_segbuf, x,w,wg, nrm, return_gauss_val=return_gauss_val)
             else
                 segbuf2 = evalrules!(resize!(segbuf, length(eval_segbuf)),
-                                     f, eval_segbuf, x,w,wg, nrm)
+                                     f, eval_segbuf, x,w,wg, nrm, return_gauss_val=return_gauss_val)
             end
         else
             if isnothing(segbuf)
                 segbuf2 = map(eval_segbuf) do seg
-                    evalrule(f, seg.a, seg.b, x,w,wg, nrm)
+                    evalrule(f, seg.a, seg.b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
                 end
             else
                 segbuf2 = map!(resize!(segbuf, length(eval_segbuf)), eval_segbuf) do seg
-                    evalrule(f, seg.a, seg.b, x,w,wg, nrm)
+                    evalrule(f, seg.a, seg.b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
                 end
             end
         end
@@ -47,11 +48,11 @@ function do_quadgk(f::F, s::NTuple{N,T}, n, atol, rtol, maxevals, nrm,
     else
         @assert N ≥ 2
         if f isa BatchIntegrand
-            segs = evalrules(f, s, x,w,wg, nrm)
+            segs = evalrules(f, s, x,w,wg, nrm, return_gauss_val=return_gauss_val)
         else
             segs = ntuple(Val{N-1}()) do i
                 a, b = s[i], s[i+1]
-                evalrule(f, a,b, x,w,wg, nrm)
+                evalrule(f, a,b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
             end
         end
 
@@ -84,16 +85,16 @@ function do_quadgk(f::F, s::NTuple{N,T}, n, atol, rtol, maxevals, nrm,
 
     segheap = segbuf2 === nothing ? collect(segs) : segbuf2
     heapify!(segheap, Reverse)
-    I, E = resum(f, adapt(f, segheap, I, E, numevals, x,w,wg,n, atol_, rtol_, maxevals, nrm))
+    I, E = resum(f, adapt(f, segheap, I, E, numevals, x,w,wg,n, atol_, rtol_, maxevals, nrm, return_gauss_val=return_gauss_val))
     return _segbuf isa ReturnSegbuf ? (I, E, segheap) : (I, E)
 end
 
 # internal routine to perform the h-adaptive refinement of the integration segments (segs)
-function adapt(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm) where {F, T}
+function adapt(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm; return_gauss_val::Bool=false) where {F, T}
     # Pop the biggest-error segment and subdivide (h-adaptation)
     # until convergence is achieved or maxevals is exceeded.
     while E > atol && E > rtol * nrm(I) && numevals < maxevals
-        next = refine(f, segs, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm)
+        next = refine(f, segs, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm, return_gauss_val=return_gauss_val)
         next isa Vector && return next # handle type-unstable functions
         I, E, numevals = next
     end
@@ -101,7 +102,7 @@ function adapt(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxe
 end
 
 # internal routine to refine the segment with largest error
-function refine(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm) where {F, T}
+function refine(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm; return_gauss_val::Bool=false) where {F, T}
     s = heappop!(segs, Reverse)
     mid = (s.a + s.b) / 2
 
@@ -111,8 +112,8 @@ function refine(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, max
         return segs
     end
 
-    s1 = evalrule(f, s.a, mid, x,w,wg, nrm)
-    s2 = evalrule(f, mid, s.b, x,w,wg, nrm)
+    s1 = evalrule(f, s.a, mid, x,w,wg, nrm, return_gauss_val=return_gauss_val)
+    s2 = evalrule(f, mid, s.b, x,w,wg, nrm, return_gauss_val=return_gauss_val)
 
     if f isa InplaceIntegrand
         I .= (I .- s.I) .+ s1.I .+ s2.I
@@ -126,7 +127,7 @@ function refine(f::F, segs::Vector{T}, I, E, numevals, x,w,wg,n, atol, rtol, max
     Tj = promote_type(typeof(s1), promote_type(typeof(s2), T))
     if Tj !== T
         return adapt(f, heappush!(heappush!(Vector{Tj}(segs), s1, Reverse), s2, Reverse),
-                     I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm)
+                     I, E, numevals, x,w,wg,n, atol, rtol, maxevals, nrm, return_gauss_val=return_gauss_val)
     end
 
     heappush!(segs, s1, Reverse)
